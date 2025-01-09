@@ -177,6 +177,7 @@ func run(ctx context.Context) int {
 		}
 
 		s := tsnet.Server{
+			Dir:       os.Getenv("CONFIGURATION_DIRECTORY"),
 			Ephemeral: true,
 			Hostname:  cfg.Tailscale.Hostname,
 			UserLogf: func(format string, args ...interface{}) {
