@@ -61,7 +61,9 @@ func run(ctx context.Context) int {
 	zoneNames := make([]string, 0, len(cfg.Zones))
 
 	for zone, zcfg := range cfg.Zones {
+		zone = newdns.NormalizeDomain(zone, true, true, false)
 		zoneSets := make(map[string][]newdns.Set, len(zcfg))
+
 		for name, addr := range zcfg {
 			addr = newdns.NormalizeDomain(addr, true, true, false)
 
@@ -83,7 +85,7 @@ func run(ctx context.Context) int {
 
 		zones = append(zones, newdns.Zone{
 			Name:             zone,
-			Expire:           time.Duration(cfg.Expire),
+			NSTTL:            time.Duration(cfg.Expire),
 			MinTTL:           time.Duration(cfg.Expire),
 			MasterNameServer: hostname + ".",
 			AllNameServers:   []string{hostname + ".", hostname + "."},
@@ -101,6 +103,12 @@ func run(ctx context.Context) int {
 			"added zone",
 			"zone", zone,
 			"zone.sets", len(zoneSets))
+	}
+
+	if len(zones) == 0 {
+		slog.Error(
+			"no zones configured")
+		os.Exit(1)
 	}
 
 	// create server
@@ -121,7 +129,7 @@ func run(ctx context.Context) int {
 				"message", msg,
 			)
 			if err != nil {
-				slog.Warn(
+				slog.Error(
 					"dns error",
 					"err", err)
 			} else {
@@ -136,6 +144,10 @@ func run(ctx context.Context) int {
 		server.Close()
 	}()
 
+	slog.Info(
+		"DNS server starting",
+		"addr", cfg.Addr)
+
 	if err := server.Run(cfg.Addr); err != nil {
 		slog.Error(
 			"failed to run DNS server",
@@ -143,10 +155,5 @@ func run(ctx context.Context) int {
 		os.Exit(1)
 	}
 
-	slog.Info(
-		"DNS server started",
-		"addr", cfg.Addr)
-
-	<-ctx.Done()
 	return 0
 }

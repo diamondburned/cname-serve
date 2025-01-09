@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"time"
 
@@ -12,7 +13,7 @@ type Config struct {
 	Addr        string                `toml:"addr"`
 	Expire      tomlDuration          `toml:"expire"`
 	FallbackDNS string                `toml:"fallback_dns"`
-	Zones       map[string]ZoneConfig `toml:"zone"`
+	Zones       map[string]ZoneConfig `toml:"zones"`
 }
 
 type ZoneConfig map[string]string
@@ -30,11 +31,17 @@ func (d *tomlDuration) UnmarshalText(text []byte) error {
 
 func defaultConfig() *Config {
 	return &Config{
-		Expire: tomlDuration(30 * time.Second),
+		Addr:        ":53",
+		Expire:      tomlDuration(5 * time.Second),
+		FallbackDNS: "100.100.100.100:53",
 	}
 }
 
 func ParseConfigFile(path string) (*Config, error) {
+	slog.Debug(
+		"parsing config file",
+		"path", path)
+
 	d, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read config file: %w", err)
