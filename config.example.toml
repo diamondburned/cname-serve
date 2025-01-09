@@ -1,0 +1,16 @@
+# The listening address for the DNS server.
+addr = ":1337"
+
+# The expiration time for DNS records. Keep it low so that when we get out of
+# the Tailnet, we don't have stale records.
+expire = "30s"
+
+# The DNS server to forward queries to.
+# The default value is Tailscale's local DNS resolver, which requires "Override
+# local DNS" to be enabled in the Tailscale settings. If this is not ideal, use
+# "1.1.1.1:53".
+fallback_dns = "100.100.100.100:53"
+
+# Declare the DNS CNAME records.
+[cname."d14.place."]
+ha = "bridget.skate-gopher.ts.net"
