@@ -1,5 +1,5 @@
 # The listening address for the DNS server.
-addr = ":1337"
+addr = ":53"
 
 # The expiration time for DNS records. Keep it low so that when we get out of
 # the Tailnet, we don't have stale records.
@@ -10,6 +10,16 @@ expire = "5s"
 # local DNS" to be enabled in the Tailscale settings. If this is not ideal, use
 # "1.1.1.1:53".
 fallback_dns = "100.100.100.100:53"
+
+[tailscale]
+# Enable using Tailscale to create a new node for listening to.
+# If this is true, then `addr` must be omitted or ":53".
+# It will also require $TS_AUTHKEY to be set.
+enable = true
+
+# Hostname for the Tailscale node.
+# This does not matter much, since Split DNS requires an IP address.
+hostname = "cname-serve"
 
 # Declare the DNS CNAME records.
 [zones."d14.place."]

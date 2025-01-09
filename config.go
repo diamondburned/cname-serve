@@ -13,10 +13,17 @@ type Config struct {
 	Addr        string                `toml:"addr"`
 	Expire      tomlDuration          `toml:"expire"`
 	FallbackDNS string                `toml:"fallback_dns"`
+	Tailscale   TailscaleConfig       `toml:"tailscale"`
 	Zones       map[string]ZoneConfig `toml:"zones"`
 }
 
 type ZoneConfig map[string]string
+
+type TailscaleConfig struct {
+	Enable    bool   `toml:"enable"`
+	Ephemeral bool   `toml:"ephemeral"`
+	Hostname  string `toml:"hostname"`
+}
 
 type tomlDuration time.Duration
 
@@ -34,6 +41,10 @@ func defaultConfig() *Config {
 		Addr:        ":53",
 		Expire:      tomlDuration(5 * time.Second),
 		FallbackDNS: "100.100.100.100:53",
+		Tailscale: TailscaleConfig{
+			Enable:   false,
+			Hostname: "cname-serve",
+		},
 	}
 }
 
