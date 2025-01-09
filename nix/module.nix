@@ -58,6 +58,7 @@ in
         {
           ExecStart = "${lib.getExe config.services.cname-serve.package} ${flags}";
           DynamicUser = true;
+          ConfigurationDirectory = "cname-serve";
           NoNewPrivileges = true;
           AmbientCapabilities = [
             "CAP_NET_BIND_SERVICE"
