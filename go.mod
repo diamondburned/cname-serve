@@ -8,6 +8,7 @@ require (
 	github.com/miekg/dns v1.1.58
 	github.com/pelletier/go-toml/v2 v2.2.3
 	github.com/spf13/pflag v1.0.5
+	golang.org/x/sync v0.9.0
 	tailscale.com v1.78.3
 )
 
@@ -90,7 +91,6 @@ require (
 	golang.org/x/exp v0.0.0-20240119083558-1b970713d09a // indirect
 	golang.org/x/mod v0.19.0 // indirect
 	golang.org/x/net v0.27.0 // indirect
-	golang.org/x/sync v0.9.0 // indirect
 	golang.org/x/sys v0.27.0 // indirect
 	golang.org/x/term v0.22.0 // indirect
 	golang.org/x/text v0.16.0 // indirect

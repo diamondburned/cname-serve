@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/netip"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"github.com/charmbracelet/log"
 	"github.com/miekg/dns"
 	"github.com/spf13/pflag"
+	"golang.org/x/sync/errgroup"
 	"tailscale.com/tsnet"
 )
 
@@ -142,23 +144,7 @@ func run(ctx context.Context) int {
 		dnsMux.Handle(".", newdns.Proxy(cfg.FallbackDNS, logDNSEvent))
 	}
 
-	dnsServer := &dns.Server{
-		Net:           "udp",
-		Addr:          cfg.Addr,
-		Handler:       dnsMux,
-		MsgAcceptFunc: newdns.Accept(logDNSEvent),
-	}
-
-	go func() {
-		<-ctx.Done()
-		slog.Info("shutting down DNS server")
-
-		if err := dnsServer.Shutdown(); err != nil {
-			slog.Error(
-				"failed to shutdown UDP server",
-				"err", err)
-		}
-	}()
+	errg, ctx := errgroup.WithContext(ctx)
 
 	if cfg.Tailscale.Enable {
 		authKey := os.Getenv("TS_AUTHKEY")
@@ -176,7 +162,7 @@ func run(ctx context.Context) int {
 			return 1
 		}
 
-		s := tsnet.Server{
+		tss := tsnet.Server{
 			Dir:       os.Getenv("CONFIGURATION_DIRECTORY"),
 			Ephemeral: cfg.Tailscale.Ephemeral,
 			Hostname:  cfg.Tailscale.Hostname,
@@ -186,9 +172,9 @@ func run(ctx context.Context) int {
 					"component", "tailscale")
 			},
 		}
-		defer s.Close()
+		defer tss.Close()
 
-		tsStatus, err := s.Up(ctx)
+		tsStatus, err := tss.Up(ctx)
 		if err != nil {
 			slog.Error(
 				"failed to bring up Tailscale connection",
@@ -212,42 +198,91 @@ func run(ctx context.Context) int {
 
 		firstV4 := tsStatus.TailscaleIPs[firstV4Ix]
 		slog.Debug(
-			"using first IPv4 address",
+			"using Tailscale's first IPv4 address",
 			"addr", firstV4)
 
-		conn, err := s.ListenPacket("udp", netip.AddrPortFrom(firstV4, 53).String())
-		if err != nil {
-			slog.Error(
-				"failed to listen to UDP on Tailscale",
-				"hostname", cfg.Tailscale.Hostname,
-				"err", err)
-			return 1
-		}
+		// Start UDP server:
+		errg.Go(func() error {
+			conn, err := tss.ListenPacket("udp", netip.AddrPortFrom(firstV4, 53).String())
+			if err != nil {
+				return fmt.Errorf("failed to listen to UDP on Tailscale: %w", err)
+			}
+			defer closeHandleErr(conn)
 
-		slog = slog.With(
-			"conn.local_addr", conn.LocalAddr(),
-		)
+			slog = slog.With(
+				"conn.local_addr", conn.LocalAddr())
+			slog.Info("UDP DNS server starting via Tailscale")
 
-		slog.Info("DNS server starting via Tailscale")
+			dnss := newDNSServer("udp", dnsMux)
+			dnss.PacketConn = conn
 
-		dnsServer.PacketConn = conn
-		if err := dnsServer.ActivateAndServe(); err != nil {
-			slog.Error(
-				"failed to run UDP server on Tailscale",
-				"err", err)
-			return 1
-		}
+			errg.Go(func() error {
+				ctxWaitShutdown(ctx, dnss)
+				return nil
+			})
+
+			return dnss.ActivateAndServe()
+		})
+
+		// Start TCP server:
+		errg.Go(func() error {
+			conn, err := tss.Listen("tcp", netip.AddrPortFrom(firstV4, 53).String())
+			if err != nil {
+				return fmt.Errorf("failed to listen to TCP on Tailscale: %w", err)
+			}
+			defer closeHandleErr(conn)
+
+			slog = slog.With(
+				"conn.local_addr", conn.Addr())
+			slog.Info("TCP DNS server starting via Tailscale")
+
+			dnss := newDNSServer("tcp", dnsMux)
+			dnss.Listener = conn
+
+			errg.Go(func() error {
+				ctxWaitShutdown(ctx, dnss)
+				return nil
+			})
+
+			return dnss.ActivateAndServe()
+		})
 	} else {
 		slog.Info(
 			"DNS server starting",
 			"addr", cfg.Addr)
 
-		if err := dnsServer.ListenAndServe(); err != nil {
-			slog.Error(
-				"failed to run UDP server",
-				"err", err)
-			return 1
-		}
+		// Start UDP server:
+		errg.Go(func() error {
+			dnss := newDNSServer("udp", dnsMux)
+			dnss.Addr = cfg.Addr
+
+			errg.Go(func() error {
+				ctxWaitShutdown(ctx, dnss)
+				return nil
+			})
+
+			return dnss.ListenAndServe()
+		})
+
+		// Start TCP server:
+		errg.Go(func() error {
+			dnss := newDNSServer("tcp", dnsMux)
+			dnss.Addr = cfg.Addr
+
+			errg.Go(func() error {
+				ctxWaitShutdown(ctx, dnss)
+				return nil
+			})
+
+			return dnss.ListenAndServe()
+		})
+	}
+
+	if err := errg.Wait(); err != nil {
+		slog.Error(
+			"failed to run server",
+			"err", err)
+		return 1
 	}
 
 	return 0
@@ -265,5 +300,35 @@ func logDNSEvent(e newdns.Event, msg *dns.Msg, err error, reason string) {
 	} else {
 		slog.Debug(
 			"DNS event")
+	}
+}
+
+func newDNSServer(network string, mux *dns.ServeMux) *dns.Server {
+	return &dns.Server{
+		Net:           network,
+		Handler:       mux,
+		MsgAcceptFunc: newdns.Accept(logDNSEvent),
+	}
+}
+
+func ctxWaitShutdown(ctx context.Context, shutdowner interface {
+	Shutdown() error
+}) {
+	<-ctx.Done()
+
+	slog.Info("shutting down server")
+
+	if err := shutdowner.Shutdown(); err != nil {
+		slog.Warn(
+			"failed to shutdown server",
+			"err", err)
+	}
+}
+
+func closeHandleErr(closer io.Closer) {
+	if err := closer.Close(); err != nil {
+		slog.Warn(
+			"failed to close",
+			"err", err)
 	}
 }
