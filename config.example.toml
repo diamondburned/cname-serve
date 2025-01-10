@@ -12,7 +12,8 @@ expire = "5s"
 fallback_dns = "100.100.100.100:53"
 
 # Whether to finalize the returned DNS record by having it serve an A record
-# directly, rather than a CNAME record and an A record of the target.
+# directly rather than a CNAME record. You really want this to be true for
+# Android to play nice.
 finalize = true
 
 [tailscale]

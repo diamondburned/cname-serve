@@ -41,6 +41,7 @@ func defaultConfig() *Config {
 	return &Config{
 		Addr:        ":53",
 		Expire:      tomlDuration(5 * time.Second),
+		Finalize:    true,
 		FallbackDNS: "100.100.100.100:53",
 		Tailscale: TailscaleConfig{
 			Enable:   false,
