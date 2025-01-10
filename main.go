@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/netip"
 	"os"
 	"os/signal"
@@ -64,51 +65,69 @@ func run(ctx context.Context) int {
 	}
 
 	zones := make([]newdns.Zone, 0, len(cfg.Zones))
-	zoneNames := make([]string, 0, len(cfg.Zones))
-
 	for zone, zcfg := range cfg.Zones {
 		zone = newdns.NormalizeDomain(zone, true, true, false)
-		zoneSets := make(map[string][]newdns.Set, len(zcfg))
 
-		for name, addr := range zcfg {
-			addr = newdns.NormalizeDomain(addr, true, true, false)
+		slog := slog.With(
+			"zone", zone)
 
-			fullName := zone
-			if name != "" {
-				fullName = name + "." + zone
-			}
+		targets := make(map[string]string, len(zcfg))
+		for name, target := range zcfg {
+			target = newdns.NormalizeDomain(target, true, true, false)
+			targets[name] = target
 
-			zoneSets[name] = []newdns.Set{
-				{
-					Name: fullName,
-					Type: newdns.CNAME,
-					Records: []newdns.Record{
-						{Address: addr},
-					},
-				},
-			}
+			slog.Debug(
+				"added target into zone",
+				"name", name,
+				"target", target)
 		}
 
 		zones = append(zones, newdns.Zone{
 			Name:             zone,
-			NSTTL:            time.Duration(cfg.Expire),
-			MinTTL:           time.Duration(cfg.Expire),
 			MasterNameServer: hostname + ".",
 			AllNameServers:   []string{hostname + ".", hostname + "."},
 			Handler: func(name string) ([]newdns.Set, error) {
-				if sets, ok := zoneSets[name]; ok {
-					return sets, nil
+				slog := slog.With(
+					"name", name)
+
+				target, ok := targets[name]
+				if !ok {
+					slog.Debug(
+						"no target found for name")
+					return nil, nil
 				}
-				return nil, nil
+
+				if cfg.Finalize {
+					targetIPs, err := net.DefaultResolver.LookupIP(ctx, "ip", target)
+					if err != nil {
+						return nil, fmt.Errorf("failed to resolve target: %w", err)
+					}
+
+					slog.Debug(
+						"resolved target to IPs",
+						"target", target,
+						"ips", targetIPs)
+
+					return []newdns.Set{
+						{
+							Name:    joinDomain(name, zone),
+							Type:    newdns.A,
+							Records: ipsToDNSRecords(targetIPs),
+							TTL:     time.Duration(cfg.Expire),
+						},
+					}, nil
+				} else {
+					return []newdns.Set{
+						{
+							Name:    joinDomain(name, zone),
+							Type:    newdns.CNAME,
+							Records: []newdns.Record{{Address: target}},
+							TTL:     time.Duration(cfg.Expire),
+						},
+					}, nil
+				}
 			},
 		})
-
-		zoneNames = append(zoneNames, zone)
-
-		slog.Debug(
-			"added zone",
-			"zone", zone,
-			"zone.sets", len(zoneSets))
 	}
 
 	if len(zones) == 0 {
@@ -119,8 +138,6 @@ func run(ctx context.Context) int {
 
 	// create dnsHandler
 	dnsHandler := newdns.NewServer(newdns.Config{
-		Zones:    zoneNames,
-		Fallback: cfg.FallbackDNS,
 		Handler: func(name string) (*newdns.Zone, error) {
 			for _, zone := range zones {
 				if newdns.InZone(zone.Name, name) {
@@ -209,7 +226,7 @@ func run(ctx context.Context) int {
 			}
 			defer closeHandleErr(conn)
 
-			slog = slog.With(
+			slog := slog.With(
 				"conn.local_addr", conn.LocalAddr())
 			slog.Info("UDP DNS server starting via Tailscale")
 
@@ -232,7 +249,7 @@ func run(ctx context.Context) int {
 			}
 			defer closeHandleErr(conn)
 
-			slog = slog.With(
+			slog := slog.With(
 				"conn.local_addr", conn.Addr())
 			slog.Info("TCP DNS server starting via Tailscale")
 
@@ -309,6 +326,26 @@ func newDNSServer(network string, mux *dns.ServeMux) *dns.Server {
 		Handler:       mux,
 		MsgAcceptFunc: newdns.Accept(logDNSEvent),
 	}
+}
+
+func ipsToDNSRecords(ips []net.IP) []newdns.Record {
+	records := make([]newdns.Record, 0, len(ips))
+	for _, ip := range ips {
+		records = append(records, newdns.Record{
+			Address: ip.String(),
+		})
+	}
+	return records
+}
+
+func joinDomain(name, zone string) string {
+	if zone == "." {
+		return name
+	}
+	if name == "" {
+		return zone
+	}
+	return name + "." + zone
 }
 
 func ctxWaitShutdown(ctx context.Context, shutdowner interface {

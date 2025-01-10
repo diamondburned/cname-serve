@@ -13,11 +13,12 @@ type Config struct {
 	Addr        string                `toml:"addr"`
 	Expire      tomlDuration          `toml:"expire"`
 	FallbackDNS string                `toml:"fallback_dns"`
+	Finalize    bool                  `toml:"finalize"`
 	Tailscale   TailscaleConfig       `toml:"tailscale"`
 	Zones       map[string]ZoneConfig `toml:"zones"`
 }
 
-type ZoneConfig map[string]string
+type ZoneConfig map[string]string // name -> target CNAME
 
 type TailscaleConfig struct {
 	Enable    bool   `toml:"enable"`
