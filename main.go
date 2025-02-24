@@ -161,15 +161,15 @@ func run(ctx context.Context) int {
 	// Add in all zones.
 	for _, zone := range zones {
 		dnsHandlerWithFallback := dns.HandlerFunc(func(w dns.ResponseWriter, req *dns.Msg) {
-			copyReq := req.Copy()
-			dnsHandler.ServeDNS(w, copyReq)
+			wmock := &mockDNSResponseWriter{ResponseWriter: w}
+			dnsHandler.ServeDNS(wmock, req)
 
-			if copyReq.Rcode == dns.RcodeNameError && proxyHandler != nil {
+			if wmock.msg.Rcode == dns.RcodeNameError && proxyHandler != nil {
 				// If the request failed, try the fallback.
 				proxyHandler.ServeDNS(w, req)
 			} else {
-				// Otherwise, return the response.
-				*req = *copyReq
+				// Otherwise, return the response as-is.
+				w.WriteMsg(wmock.msg)
 			}
 		})
 		dnsMux.Handle(zone.Name, dnsHandlerWithFallback)
@@ -382,4 +382,31 @@ func closeHandleErr(closer io.Closer) {
 			"failed to close",
 			"err", err)
 	}
+}
+
+// mockDNSResponseWriter is a mock implementation of dns.ResponseWriter.
+// It intercepts the response message written to it and stores it in the msg
+// field.
+type mockDNSResponseWriter struct {
+	dns.ResponseWriter
+	msg *dns.Msg
+}
+
+var _ dns.ResponseWriter = (*mockDNSResponseWriter)(nil)
+
+func (w *mockDNSResponseWriter) WriteMsg(m *dns.Msg) error {
+	w.msg = m
+	return nil
+}
+
+func (w *mockDNSResponseWriter) Write(b []byte) (int, error) {
+	return 0, fmt.Errorf("not implemented")
+}
+
+func (w *mockDNSResponseWriter) Close() error {
+	return nil
+}
+
+func (w *mockDNSResponseWriter) Hijack() {
+	panic("nope! you can't hijack this!")
 }
