@@ -151,14 +151,28 @@ func run(ctx context.Context) int {
 
 	dnsMux := dns.NewServeMux()
 
-	// Add in all zones.
-	for _, zone := range zones {
-		dnsMux.Handle(zone.Name, dnsHandler)
+	// Add in fallback if available.
+	var proxyHandler dns.Handler
+	if cfg.FallbackDNS != "" {
+		proxyHandler = newdns.Proxy(cfg.FallbackDNS, logDNSEvent)
+		dnsMux.Handle(".", newdns.Proxy(cfg.FallbackDNS, logDNSEvent))
 	}
 
-	// Add in fallback if available.
-	if cfg.FallbackDNS != "" {
-		dnsMux.Handle(".", newdns.Proxy(cfg.FallbackDNS, logDNSEvent))
+	// Add in all zones.
+	for _, zone := range zones {
+		dnsHandlerWithFallback := dns.HandlerFunc(func(w dns.ResponseWriter, req *dns.Msg) {
+			copyReq := req.Copy()
+			dnsHandler.ServeDNS(w, copyReq)
+
+			if copyReq.Rcode == dns.RcodeNameError && proxyHandler != nil {
+				// If the request failed, try the fallback.
+				proxyHandler.ServeDNS(w, req)
+			} else {
+				// Otherwise, return the response.
+				*req = *copyReq
+			}
+		})
+		dnsMux.Handle(zone.Name, dnsHandlerWithFallback)
 	}
 
 	errg, ctx := errgroup.WithContext(ctx)
